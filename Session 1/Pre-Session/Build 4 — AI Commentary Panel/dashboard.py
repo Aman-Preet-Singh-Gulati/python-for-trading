@@ -8,7 +8,7 @@ st.set_page_config(page_title="Stock Price Dashboard", page_icon="📈", layout=
 
 # Dashboard Title
 st.title("📈 Stock Price History Dashboard")
-st.markdown("An interactive market data tool to visualize stock price trends.")
+st.caption("An interactive market data tool to visualize stock price trends.")
 
 # Calculate default date range (last 6 months)
 today = datetime.date.today()
@@ -49,85 +49,122 @@ if ticker:
             # Determine currency symbol based on exchange suffix
             currency = "₹" if ticker.endswith(".NS") or ticker.endswith(".BO") else "$"
             
-            # Display metric cards
-            col1, col2, col3 = st.columns(3)
-            with col1:
+            # Display metric cards — 5 KPIs across full width
+            high_val = float(df['High'].max())
+            low_val  = float(df['Low'].min())
+            avg_vol  = int(df['Volume'].mean()) if 'Volume' in df.columns else 0
+            latest_vol = int(df['Volume'].iloc[-1]) if 'Volume' in df.columns else 0
+
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1:
                 st.metric(
-                    label=f"Latest Close ({df.index[-1].strftime('%Y-%m-%d')})",
+                    label=f"📅 Latest Close",
                     value=f"{currency}{latest_close:.2f}",
-                    delta=f"{price_change:+.2f} ({percent_change:+.2f}%)"
+                    help=f"As of {df.index[-1].strftime('%d %b %Y')}"
                 )
-            with col2:
-                high_val = float(df['High'].max())
-                st.metric(label="Period High", value=f"{currency}{high_val:.2f}")
-            with col3:
-                low_val = float(df['Low'].min())
-                st.metric(label="Period Low", value=f"{currency}{low_val:.2f}")
+            with m2:
+                st.metric(
+                    label="📊 Day Change",
+                    value=f"{price_change:+.2f}",
+                    delta=f"{percent_change:+.2f}%",
+                    delta_color="normal"
+                )
+            with m3:
+                st.metric(
+                    label="🔺 Period High",
+                    value=f"{currency}{high_val:.2f}",
+                    help="Highest price in the selected date range"
+                )
+            with m4:
+                st.metric(
+                    label="🔻 Period Low",
+                    value=f"{currency}{low_val:.2f}",
+                    help="Lowest price in the selected date range"
+                )
+            with m5:
+                st.metric(
+                    label="📦 Latest Volume",
+                    value=f"{latest_vol:,}",
+                    delta=f"Avg: {avg_vol:,}",
+                    delta_color="off",
+                    help="Today's volume vs period average"
+                )
 
-            # Plotting price history
-            st.subheader(f"Price Trend (Close Price) for {ticker}")
-            st.line_chart(df['Close'])
+            st.markdown("---")
 
-            # AI Commentary Section
-            st.subheader("🤖 AI Market Commentary")
-            with st.spinner("Generating AI commentary..."):
-                try:
-                    from groq import Groq
-                    GROQ_API_KEY = "ENTER_KEY"
-                    client = Groq(api_key=GROQ_API_KEY)
-                    
-                    # Fetch last 20 days to ensure 10 trading days are available after weekends/holidays
-                    df_10d = yf.download(ticker, period="20d", interval="1d", progress=False)
-                    if isinstance(df_10d.columns, pd.MultiIndex):
-                        df_10d.columns = df_10d.columns.droplevel(1)
-                    df_10d = df_10d.tail(10)
-                    
-                    if not df_10d.empty:
-                        # Format the data for the prompt
-                        ohlc_summary = ""
-                        for date, row in df_10d.iterrows():
-                            date_str = date.strftime('%Y-%m-%d')
-                            ohlc_summary += f"{date_str}: Open={row['Open']:.2f}, High={row['High']:.2f}, Low={row['Low']:.2f}, Close={row['Close']:.2f}\n"
+            # Two-column layout: chart (left) | AI commentary (right)
+            chart_col, ai_col = st.columns([2, 1], gap="large")
+
+            with chart_col:
+                # Plotting price history
+                st.subheader(f"📈 Price Trend — {ticker}")
+                st.line_chart(df['Close'], use_container_width=True)
+
+            with ai_col:
+                # AI Commentary Section
+                st.subheader("🤖 AI Market Commentary")
+                with st.spinner("Generating AI commentary..."):
+                    try:
+                        from groq import Groq
+                        GROQ_API_KEY = "ENTER_KEY"
+                        client = Groq(api_key=GROQ_API_KEY)
+                        
+                        # Fetch last 20 days to ensure 10 trading days are available after weekends/holidays
+                        df_10d = yf.download(ticker, period="20d", interval="1d", progress=False)
+                        if isinstance(df_10d.columns, pd.MultiIndex):
+                            df_10d.columns = df_10d.columns.droplevel(1)
+                        df_10d = df_10d.tail(10)
+                        
+                        if not df_10d.empty:
+                            # Format the data for the prompt
+                            ohlc_summary = ""
+                            for date, row in df_10d.iterrows():
+                                date_str = date.strftime('%Y-%m-%d')
+                                ohlc_summary += f"{date_str}: Open={row['Open']:.2f}, High={row['High']:.2f}, Low={row['Low']:.2f}, Close={row['Close']:.2f}\n"
+                                
+                            prompt = (
+                                f"Here is the last 10 days of daily OHLC data for {ticker}:\n\n"
+                                f"{ohlc_summary}\n"
+                                f"Please analyze the trend and provide your 3-sentence summary."
+                            )
                             
-                        prompt = (
-                            f"Here is the last 10 days of daily OHLC data for {ticker}:\n\n"
-                            f"{ohlc_summary}\n"
-                            f"Please analyze the trend and provide your 3-sentence summary."
-                        )
-                        
-                        SYSTEM_PROMPT = (
-                            "You are a junior financial analyst summarizing stock price charts.\n"
-                            "Based on the provided last 10 days of daily OHLC data, write a plain-English summary of the recent trend.\n"
-                            "Rules:\n"
-                            "1. The summary MUST be exactly 3 sentences long. No more, no less.\n"
-                            "2. Only describe the trend. Never give buy or sell recommendations.\n"
-                            "3. If you are uncertain about the direction of the trend, clearly flag that uncertainty.\n"
-                            "4. Do not include any greeting, intro, outro, markdown formatting, or bullet points. Just output the 3 sentences."
-                        )
-                        
-                        completion = client.chat.completions.create(
-                            model="llama-3.1-8b-instant",
-                            messages=[
-                                {"role": "system", "content": SYSTEM_PROMPT},
-                                {"role": "user", "content": prompt}
-                            ],
-                            max_tokens=250,
-                            temperature=0.3
-                        )
-                        
-                        commentary = completion.choices[0].message.content.strip()
-                        # Flatten spaces to ensure proper formatting
-                        commentary = " ".join(commentary.split())
-                        
-                        st.info(commentary)
-                    else:
-                        st.warning("Insufficient data to generate AI commentary.")
-                except Exception as e:
-                    st.error(f"Error generating AI commentary: {str(e)}")
+                            SYSTEM_PROMPT = (
+                                "You are a junior financial analyst summarizing stock price charts.\n"
+                                "Based on the provided last 10 days of daily OHLC data, write a plain-English summary of the recent trend.\n"
+                                "Rules:\n"
+                                "1. The summary MUST be exactly 3 sentences long. No more, no less.\n"
+                                "2. Only describe the trend. Never give buy or sell recommendations.\n"
+                                "3. If you are uncertain about the direction of the trend, clearly flag that uncertainty.\n"
+                                "4. Do not include any greeting, intro, outro, markdown formatting, or bullet points. Just output the 3 sentences."
+                            )
+                            
+                            completion = client.chat.completions.create(
+                                model="llama-3.1-8b-instant",
+                                messages=[
+                                    {"role": "system", "content": SYSTEM_PROMPT},
+                                    {"role": "user", "content": prompt}
+                                ],
+                                max_tokens=250,
+                                temperature=0.3
+                            )
+                            
+                            commentary = completion.choices[0].message.content.strip()
+                            # Flatten spaces to ensure proper formatting
+                            commentary = " ".join(commentary.split())
+                            
+                            st.info(commentary)
+                        else:
+                            st.warning("Insufficient data to generate AI commentary.")
+                    except Exception as e:
+                        st.error(f"Error generating AI commentary: {str(e)}")
 
-            # Show raw data table
-            with st.expander("View Raw Data (Recent 5 Days)"):
-                st.dataframe(df.tail(5)[['Open', 'High', 'Low', 'Close', 'Volume']].style.format("{:.2f}"))
+            # Show raw data table (full width below the two columns)
+            st.markdown("---")
+            with st.expander("📋 View Raw Data (Recent 5 Days)"):
+                st.dataframe(
+                    df.tail(5)[['Open', 'High', 'Low', 'Close', 'Volume']].style.format("{:.2f}"),
+                    use_container_width=True
+                )
         else:
             st.error("The standard Close price column was not found in the downloaded data.")
     else:

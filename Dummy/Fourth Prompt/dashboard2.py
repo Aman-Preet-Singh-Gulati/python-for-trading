@@ -1,7 +1,9 @@
 import datetime
+import os
 import pandas as pd
 import yfinance as yf
 import streamlit as st
+from groq import Groq
 
 # Set page layout and title
 st.set_page_config(page_title="Stock Price Dashboard", page_icon="📈", layout="wide")
@@ -71,6 +73,66 @@ if ticker:
             # Show raw data table
             with st.expander("View Raw Data (Recent 5 Days)"):
                 st.dataframe(df.tail(5)[['Open', 'High', 'Low', 'Close', 'Volume']].style.format("{:.2f}"))
+
+            # ── AI Commentary Section ──────────────────────────────────────────
+            st.divider()
+            st.subheader("🤖 AI Trend Commentary")
+            st.caption(
+                "Powered by Groq · llama-3.1-8b-instant · "
+                "This is a data summary only — not financial advice."
+            )
+
+            # Groq API key
+            groq_api_key = ""
+
+            if True:
+                # Build a compact OHLC summary from the last 10 trading days
+                last10 = df[['Open', 'High', 'Low', 'Close']].tail(10)
+                ohlc_lines = []
+                for date_idx, row in last10.iterrows():
+                    ohlc_lines.append(
+                        f"  {date_idx.strftime('%Y-%m-%d')}: "
+                        f"O={row['Open']:.2f}  H={row['High']:.2f}  "
+                        f"L={row['Low']:.2f}  C={row['Close']:.2f}"
+                    )
+                ohlc_table = "\n".join(ohlc_lines)
+
+                prompt = f"""You are a junior equity analyst. Below is the last 10 trading days of \
+OHLC price data for the stock ticker {ticker}:
+
+{ohlc_table}
+
+Write EXACTLY 3 sentences in plain English that summarise the recent price trend visible in \
+this data. Rules you MUST follow:
+1. Describe only the trend — never suggest buying or selling.
+2. If the direction is unclear or mixed, explicitly say so in your summary.
+3. Do NOT include greetings, headers, bullet points, or any text beyond the 3 sentences."""
+
+                with st.spinner("Generating AI commentary..."):
+                    try:
+                        client = Groq(api_key=groq_api_key)
+                        response = client.chat.completions.create(
+                            model="llama-3.1-8b-instant",
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "You are a concise market analyst. "
+                                        "You describe price trends in plain English. "
+                                        "You never give investment advice. "
+                                        "You always respond with exactly 3 sentences."
+                                    ),
+                                },
+                                {"role": "user", "content": prompt},
+                            ],
+                            temperature=0.4,
+                            max_tokens=200,
+                        )
+                        commentary = response.choices[0].message.content.strip()
+                        st.info(f"📊 **{ticker} — Last 10 Days**\n\n{commentary}")
+                    except Exception as e:
+                        st.error(f"❌ Groq API error: {e}")
+
         else:
             st.error("The standard Close price column was not found in the downloaded data.")
     else:
